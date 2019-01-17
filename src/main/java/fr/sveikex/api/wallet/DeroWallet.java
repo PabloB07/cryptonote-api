@@ -2,12 +2,11 @@ package fr.sveikex.api.wallet;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.json.JSONArray;
@@ -15,7 +14,6 @@ import org.json.JSONObject;
 
 import com.mashape.unirest.http.HttpResponse;
 import com.mashape.unirest.http.JsonNode;
-import com.mashape.unirest.http.Unirest;
 import com.mashape.unirest.http.exceptions.UnirestException;
 
 import fr.sveikex.api.Helper;
@@ -26,8 +24,6 @@ import fr.sveikex.api.structure.Tx.Type;
 public class DeroWallet implements IWallet {
 
 	private static final int scale = 12;
-	
-	private final ExecutorService executor = Executors.newCachedThreadPool();
 	
 	private final String host;
 	private final String username;
@@ -44,7 +40,7 @@ public class DeroWallet implements IWallet {
 	public JSONObject request(JSONObject json) 
 	{
 		try {
-			HttpResponse<JsonNode> j = Unirest.post(host).basicAuth(username, password).header("Content-Type", "application/json").body(json).asJson();
+			HttpResponse<JsonNode> j = IWallet.request(host, username, password, json);
 			return j.getBody().getObject().getJSONObject("result"); //yeah it's dirty
 		} catch (UnirestException e) {
 			e.printStackTrace();
@@ -65,7 +61,7 @@ public class DeroWallet implements IWallet {
 		BigDecimal balanceUnlocked = BigDecimal.ZERO;
 		BigDecimal balanceTotal = BigDecimal.ZERO;
 		
-		List<Tx> tx = getBulkPayments(paymentId);
+		List<Tx> tx = getBulkPayment(paymentId);
 		
 		for (Tx t : tx)
 		{
@@ -78,36 +74,72 @@ public class DeroWallet implements IWallet {
 	}
 
 	@Override
-	public List<Tx> getBulkPayments(String... paymentIds)
+	public List<Tx> getBulkPayment(String paymentId)
+	{		
+		return getBulkPayment(0, paymentId);
+	}
+	
+	@Override
+	public List<Tx> getBulkPayment(int minBlockHeight, String paymentId)
+	{		
+		Map<String, List<Tx>> map = getBulkPayments(minBlockHeight, paymentId);
+		
+		if (map.containsKey(paymentId)) return map.get(paymentId);
+		else return new ArrayList<Tx>();
+	}
+	
+	@Override
+	public Map<String, List<Tx>> getBulkPayments(String... paymentIds)
 	{		
 		return getBulkPayments(200, paymentIds);
 	}
 	
 	@Override
-	public List<Tx> getBulkPayments(int minBlockHeight, String... paymentIds)
+	public Map<String, List<Tx>> getBulkPayments(int minBlockHeight, String... paymentIds)
 	{
 		Map<String, Object> map = new HashMap<String, Object>();
 		
 		map.put("payment_ids", paymentIds);
 		map.put("min_block_height", minBlockHeight);
+
+		Map<String, List<Tx>> mapTx = new HashMap<String, List<Tx>>();
 		
-		JSONArray a = request(IWallet.json("get_bulk_payments", map)).getJSONArray("payments");
+		JSONObject req = request(IWallet.json("get_bulk_payments", map));
+		System.out.println(req);
 		
-		List<Tx> tx = new ArrayList<Tx>();
+		if (!req.has("payments")) return mapTx;
+		
+		JSONArray a = req.getJSONArray("payments");
+		
 		
 		Iterator<Object> it = a.iterator();
 		
 		while (it.hasNext())
 		{
 			JSONObject j = (JSONObject) it.next();
-			
 			String address = j.isNull("destinations") ? null : j.getJSONArray("destinations").getString(0);
 			BigDecimal amount = Helper.decimal(j.getLong("amount"), scale);
 			int lockedTime = j.getInt("unlock_time");
-			tx.add(new Tx(j.getString("tx_hash"), amount, address, lockedTime, address == null ? Type.IN : Type.OUT));
+			
+			String paymentId = j.getString("payment_id");
+			
+			Tx t = new Tx(j.getInt("block_height"), j.getString("tx_hash"), amount, address, lockedTime, address == null ? Type.IN : Type.OUT);
+			
+			if (!mapTx.containsKey(paymentId))
+			{
+				List<Tx> list = new ArrayList<Tx>();
+				list.add(t);
+				mapTx.put(paymentId, list);
+			}
+			else
+			{
+				List<Tx> tx1 = mapTx.get(paymentId);
+				tx1.add(t);
+				mapTx.put(paymentId, tx1);
+			}
 		}
 		
-		return tx;
+		return mapTx;
 	}
 	
 	@Override
@@ -154,9 +186,9 @@ public class DeroWallet implements IWallet {
 			while (it.hasNext())
 			{
 				JSONObject o = (JSONObject) it.next();
-				BigDecimal amount = Helper.decimal(json.getLong("amount"), scale);
+				BigDecimal amount = Helper.decimal(o.getLong("amount"), scale);
 				
-				tx.add(new Tx(o.getString("tx_hash"), amount, null, o.getInt("unlock_time"), Type.IN));
+				tx.add(new Tx(o.getInt("block_height"), o.getString("tx_hash"), amount, null, o.getInt("unlock_time"), Type.IN));
 			}
 		}
 		
@@ -169,9 +201,9 @@ public class DeroWallet implements IWallet {
 			while (it.hasNext())
 			{
 				JSONObject o = (JSONObject) it.next();
-				BigDecimal amount = Helper.decimal(json.getLong("amount"), scale);
+				BigDecimal amount = Helper.decimal(o.getLong("amount"), scale);
 				String address = null; //Captain need to return "destinations" addresses.
-				tx.add(new Tx(o.getString("tx_hash"), amount, address, o.getInt("unlock_time"), Type.OUT));
+				tx.add(new Tx(o.getInt("block_height"), o.getString("tx_hash"), amount, address, o.getInt("unlock_time"), Type.OUT));
 			}
 		}
 		
@@ -187,14 +219,14 @@ public class DeroWallet implements IWallet {
 	}
 
 	@Override
-	public Future<List<Tx>> getBulkPaymentsAsync(int minBlockHeight, String... paymentIds) {
+	public Future<Map<String, List<Tx>>> getBulkPaymentsAsync(int minBlockHeight, String... paymentIds) {
 		return  executor.submit(() -> {
 			return getBulkPayments(minBlockHeight, paymentIds);
 		});
 	}
 
 	@Override
-	public Future<List<Tx>> getBulkPaymentsAsync(String... paymentIds) {
+	public Future<Map<String, List<Tx>>> getBulkPaymentsAsync(String... paymentIds) {
 		return executor.submit(() -> {
 			return getBulkPayments(paymentIds);
 		});
@@ -225,6 +257,19 @@ public class DeroWallet implements IWallet {
 	public Future<List<Tx>> getTransactionHistoryAsync(boolean in, boolean out, int minHeight, int maxHeight) {
 		return executor.submit(() -> {
 			return getTransactionHistory(in, out, minHeight, maxHeight);
+		});
+	}
+	@Override
+	public Future<List<Tx>> getBulkPaymentAsync(int minBlockHeight, String paymentId) {
+		return executor.submit(() -> {
+			return getBulkPayment(minBlockHeight, paymentId);
+		});
+	}
+
+	@Override
+	public Future<List<Tx>> getBulkPaymentAsync(String paymentId) {
+		return executor.submit(() -> {
+			return getBulkPayment(paymentId);
 		});
 	}
 }

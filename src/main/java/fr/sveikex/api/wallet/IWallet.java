@@ -3,14 +3,23 @@ package fr.sveikex.api.wallet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import org.json.JSONObject;
+
+import com.mashape.unirest.http.HttpResponse;
+import com.mashape.unirest.http.JsonNode;
+import com.mashape.unirest.http.Unirest;
+import com.mashape.unirest.http.exceptions.UnirestException;
 
 import fr.sveikex.api.structure.Balance;
 import fr.sveikex.api.structure.Tx;
 
 public interface IWallet {
+	
+	static final ExecutorService executor = Executors.newCachedThreadPool();
 	
 	JSONObject request(JSONObject json);
 	
@@ -24,13 +33,21 @@ public interface IWallet {
 	
 	public Future<Balance> getBalanceAsync(String paymentId);
 	
-	public List<Tx> getBulkPayments(int minBlockHeight, String... paymentIds);
+	public Map<String, List<Tx>> getBulkPayments(int minBlockHeight, String... paymentIds);
 	
-	public Future<List<Tx>> getBulkPaymentsAsync(int minBlockHeight, String... paymentIds);
+	public Future<Map<String, List<Tx>>> getBulkPaymentsAsync(int minBlockHeight, String... paymentIds);
 	
-	public List<Tx> getBulkPayments(String... paymentIds);
+	public Map<String, List<Tx>> getBulkPayments(String... paymentIds);
 	
-	public Future<List<Tx>> getBulkPaymentsAsync(String... paymentIds);
+	public Future<Map<String, List<Tx>>> getBulkPaymentsAsync(String... paymentIds);
+	
+	public List<Tx> getBulkPayment(int minBlockHeight, String paymentId);
+	
+	public Future<List<Tx>> getBulkPaymentAsync(int minBlockHeight, String paymentId);
+	
+	public List<Tx> getBulkPayment(String paymentId);
+	
+	public Future<List<Tx>> getBulkPaymentAsync(String paymentId);
 	
 	public int getHeight();
 	
@@ -79,5 +96,15 @@ public interface IWallet {
 		if (params != null) json.put("params", params);
 		
 		return json;
+	}
+	
+	static HttpResponse<JsonNode> request(String host, String username, String password, JSONObject json) throws UnirestException
+	{
+		return Unirest.post(host).basicAuth(username, password).header("Content-Type", "application/json").body(json).asJson();
+	}
+	
+	public static void shutdownExecutor()
+	{
+		executor.shutdown();
 	}
 }

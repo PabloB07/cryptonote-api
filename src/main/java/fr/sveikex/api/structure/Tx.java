@@ -4,15 +4,17 @@ import java.math.BigDecimal;
 
 public class Tx {
 
-	public final String txId;
+	public final int blockHeight;
+	public final String txHash;
 	public final BigDecimal amount;
 	public final String address;
 	public final byte lockedTime; //in blocks
 	public final Type type;
 	
-	public Tx(String txId, BigDecimal amount, String address, int lockedTime, Type type)
+	public Tx(int blockHeight, String txId, BigDecimal amount, String address, int lockedTime, Type type)
 	{
-		this.txId = txId;
+		this.blockHeight = blockHeight;
+		this.txHash = txId;
 		this.amount = amount;
 		this.address = address;
 		this.lockedTime = (byte) lockedTime;
